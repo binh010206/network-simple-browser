@@ -545,9 +545,123 @@ public class SimpleBrowser extends JFrame {
     }
 
     private String prepareHtmlForSwingView(String rawHtml, String baseUrl) {
-        String clean = rawHtml.replaceAll("(?is)<(script|style|svg)[^>]*>.*?</\\1>", "");
-        clean = clean.replaceAll("(?is)<(link|meta)[^>]*>", "");
+        if (rawHtml == null || rawHtml.isEmpty()) return "";
+
+        // 1. Loại bỏ <script> không cần thiết
+        String clean = rawHtml.replaceAll("(?is)<script[^>]*>.*?</script>", "");
+
+        // 2. Chuyển đổi toàn bộ relative URL (href, src) thành absolute URL dựa theo baseUrl
+        clean = resolveRelativeUrls(clean, baseUrl);
+
+        // 3. Xử lý ảnh SVG / biểu tượng không hỗ trợ trên Swing để tránh bị hiện ô vuông dấu X đỏ
+        clean = clean.replaceAll("(?is)<svg[^>]*>.*?</svg>", "");
+        clean = clean.replaceAll("(?is)<img[^>]+src=[\"'][^\"']*?\\.svg[\"'][^>]*>", "");
+
+        // 4. Tự động nạp và nhúng các stylesheet CSS được liên kết bằng <link rel="stylesheet">
+        clean = inlineStylesheets(clean, baseUrl);
+
+        // 5. Bổ sung bộ CSS hiện đại chuẩn hóa cho Swing
+        String injectedCss = "<style type='text/css'>\n"
+                + "body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 13px; color: #24292f; background-color: #ffffff; margin: 15px; line-height: 1.5; }\n"
+                + "h1 { font-size: 20px; color: #0969da; border-bottom: 2px solid #eaeef2; padding-bottom: 6px; margin: 15px 0 10px 0; }\n"
+                + "h2 { font-size: 16px; color: #1f2328; border-bottom: 1px solid #d0d7de; padding-bottom: 4px; margin: 12px 0 8px 0; }\n"
+                + "h3 { font-size: 14px; color: #24292f; margin: 10px 0 6px 0; }\n"
+                + "p { margin: 6px 0; line-height: 1.5; }\n"
+                + "a { color: #0969da; text-decoration: none; font-weight: 500; }\n"
+                + "a:hover { text-decoration: underline; color: #0550ae; }\n"
+                + "ul, ol { margin-left: 20px; padding-left: 5px; margin-top: 4px; margin-bottom: 8px; }\n"
+                + "li { margin-bottom: 5px; }\n"
+                + "table { border-collapse: collapse; width: 100%; margin: 12px 0; border: 1px solid #d0d7de; }\n"
+                + "th { background-color: #f6f8fa; color: #24292f; font-weight: bold; border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; }\n"
+                + "td { border: 1px solid #d0d7de; padding: 6px 10px; }\n"
+                + "code, pre { font-family: Consolas, 'Courier New', monospace; font-size: 12px; background-color: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px; padding: 2px 4px; }\n"
+                + ".header { background-color: #0066cc; color: #ffffff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; }\n"
+                + ".header h1 { color: #ffffff; border-bottom: none; }\n"
+                + ".header p { color: #e6f4ea; }\n"
+                + ".card { background-color: #ffffff; border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; margin-bottom: 14px; }\n"
+                + ".card h2 { color: #00529b; border-bottom: 1px solid #e1e4e8; }\n"
+                + ".inner-box { background-color: #f6f8fa; border-left: 4px solid #0066cc; padding: 10px 14px; margin: 10px 0; }\n"
+                + "span { color: #d73a49; font-weight: bold; }\n"
+                + "</style>\n";
+
+        if (clean.toLowerCase().contains("<head>")) {
+            clean = clean.replaceFirst("(?i)<head>", "<head>" + Matcher.quoteReplacement(injectedCss));
+        } else if (clean.toLowerCase().contains("<html>")) {
+            clean = clean.replaceFirst("(?i)<html>", "<html><head>" + Matcher.quoteReplacement(injectedCss) + "</head>");
+        } else {
+            clean = "<html><head>" + injectedCss + "</head><body>" + clean + "</body></html>";
+        }
+
         return clean;
+    }
+
+    private String resolveRelativeUrls(String html, String baseUrl) {
+        if (baseUrl == null || baseUrl.isEmpty() || !baseUrl.startsWith("http")) return html;
+        try {
+            URI baseUri = URI.create(baseUrl);
+            Pattern p = Pattern.compile("(?i)(href|src)=[\"']([^\"'#]+)[\"']");
+            Matcher m = p.matcher(html);
+            StringBuilder sb = new StringBuilder();
+            while (m.find()) {
+                String attr = m.group(1);
+                String path = m.group(2).trim();
+                if (!path.startsWith("http://") && !path.startsWith("https://")
+                        && !path.startsWith("data:") && !path.startsWith("javascript:")
+                        && !path.startsWith("mailto:")) {
+                    try {
+                        URI resolved = baseUri.resolve(path);
+                        m.appendReplacement(sb, attr + "=\"" + resolved.toASCIIString() + "\"");
+                        continue;
+                    } catch (Exception ignored) {}
+                }
+                m.appendReplacement(sb, Matcher.quoteReplacement(m.group(0)));
+            }
+            m.appendTail(sb);
+            return sb.toString();
+        } catch (Exception e) {
+            return html;
+        }
+    }
+
+    private String inlineStylesheets(String html, String baseUrl) {
+        if (baseUrl == null || baseUrl.isEmpty()) return html;
+        try {
+            URI baseUri = URI.create(baseUrl);
+            Pattern p = Pattern.compile("(?i)<link[^>]+rel=[\"']stylesheet[\"'][^>]*href=[\"']([^\"']+)[\"'][^>]*>");
+            Matcher m = p.matcher(html);
+            StringBuilder sb = new StringBuilder();
+            while (m.find()) {
+                String cssHref = m.group(1).trim();
+                String cssContent = "";
+                try {
+                    URI cssUri = baseUri.resolve(cssHref);
+                    if ("file".equalsIgnoreCase(cssUri.getScheme())) {
+                        cssContent = Files.readString(Path.of(cssUri), StandardCharsets.UTF_8);
+                    } else if (cssUri.getScheme() != null && cssUri.getScheme().startsWith("http")) {
+                        HttpRequest req = HttpRequest.newBuilder(cssUri)
+                                .timeout(Duration.ofSeconds(3))
+                                .header("User-Agent", "Mozilla/5.0 VKU-SimpleBrowser/4.0")
+                                .build();
+                        HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                        if (resp.statusCode() == 200) {
+                            cssContent = resp.body();
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                if (!cssContent.isEmpty()) {
+                    String filteredCss = cssContent.replaceAll("(?is)@media[^{]+\\{([^{}]*\\{[^{}]*\\})*\\s*\\}", "")
+                            .replaceAll("(?is)@keyframes[^{]+\\{([^{}]*\\{[^{}]*\\})*\\s*\\}", "");
+                    m.appendReplacement(sb, "<style type='text/css'>" + Matcher.quoteReplacement(filteredCss) + "</style>");
+                } else {
+                    m.appendReplacement(sb, "");
+                }
+            }
+            m.appendTail(sb);
+            return sb.toString();
+        } catch (Exception e) {
+            return html;
+        }
     }
 
     private int countHtmlTag(String html, String tagName) {
