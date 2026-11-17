@@ -7,6 +7,8 @@
   "code-runner.runInTerminal": true,
   "code-runner.saveAllFilesBeforeRun": true,
   "code-runner.ignoreSelection": true,
+  "java.project.sourcePaths": ["."],
+  "java.project.outputPath": ".build",
   "java.project.referencedLibraries": [
     "postgresql-connector.jar",
     "pdfbox-app.jar"

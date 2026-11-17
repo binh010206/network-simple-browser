@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Browser: Build Java",
+      "type": "process",
+      "command": "java",
+      "args": ["Run.java", "build"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {"reveal": "silent", "panel": "dedicated"}
+    }
+  ]
+}

@@ -2,12 +2,15 @@
 
 Máy Server chạy Java + PostgreSQL. Máy Client chỉ cần JDK 21 và VS Code.
 
-## Chạy bằng Run Code
+## Chạy trực tiếp trong VS Code (không dùng BAT)
 
-1. Mở **đúng thư mục repo** trong VS Code, cài extension Code Runner.
-2. Server: mở `httpServer.java`, bấm **Run Code** (Ctrl+Alt+N).
-3. Client: mở `SimpleBrowser.java`, bấm **Run Code**.
+1. Mở **đúng thư mục repo** trong VS Code, cài Extension Pack for Java và Code Runner; cần JDK 21.
+2. Máy Server: mở `httpServer.java`, bấm **Run Code** (Ctrl+Alt+N).
+3. Máy Client: mở `SimpleBrowser.java`, bấm **Run Code**.
 4. Nhập `http://IP_MAY_SERVER:8080/index.html` trên Client.
+
+Hoặc mở **Run and Debug** (Ctrl+Shift+D), chọn **Server - HTTP va PostgreSQL** trên máy Server / **Client - Browser** trên máy Client rồi bấm F5. VS Code tự biên dịch trước khi chạy.
+Có thể bấm **Run Java** ngay trên hàm `main` khi Java extension đã tải xong dự án.
 
 Server in các IP hiện tại khi khởi động. Chọn IP Wi-Fi/LAN cùng mạng với Client.
 Cho phép TCP 8080 qua firewall trên Server. Không cần mở cổng PostgreSQL ra mạng.
@@ -44,6 +47,14 @@ ORDER BY id DESC;
 ```
 
 Bấm F5 chạy lại truy vấn sau mỗi lần gửi request. Không cần cài PostgreSQL trên máy Client.
+
+Thứ tự demo hai máy:
+1. Bật PostgreSQL và chạy `httpServer.java` trên máy Binh. Đợi thông báo kết nối database và lắng nghe cổng 8080.
+2. Chạy `SimpleBrowser.java` trên máy Phát. Nhập địa chỉ HTTP của máy Binh, chọn GET và bấm Gửi Request.
+3. Phát thấy trang chủ và dòng **ĐÃ LƯU bản ghi #...**; Binh chạy lại truy vấn pgAdmin và đối chiếu cùng ID, IP của Phát.
+4. Phát gửi HEAD `/sample.pdf`, POST `/index.html` với `message=Phat_demo`, rồi GET/tải PDF, MP3, MP4.
+5. Binh kiểm tra `method`, `post_data`, `status_code`, `client_ip` trong PostgreSQL. Dừng rồi chạy lại Server để chứng minh dữ liệu vẫn còn.
+6. Demo thêm file trên máy Phát bằng đường dẫn tuyệt đối và trang web `vku.udn.vn`. Hai thao tác này không đi qua HTTP Server của Binh nên không tạo nhật ký trên PostgreSQL của Binh.
 
 ## Thanh địa chỉ: web và file trên máy
 

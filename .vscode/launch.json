@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Server - HTTP va PostgreSQL",
+      "request": "launch",
+      "mainClass": "httpServer",
+      "cwd": "${workspaceFolder}",
+      "classPaths": ["${workspaceFolder}/.build", "${workspaceFolder}/postgresql-connector.jar"],
+      "console": "integratedTerminal",
+      "preLaunchTask": "Browser: Build Java"
+    },
+    {
+      "type": "java",
+      "name": "Client - Browser",
+      "request": "launch",
+      "mainClass": "SimpleBrowser",
+      "cwd": "${workspaceFolder}",
+      "classPaths": ["${workspaceFolder}/.build", "${workspaceFolder}/pdfbox-app.jar"],
+      "console": "integratedTerminal",
+      "preLaunchTask": "Browser: Build Java"
+    }
+  ]
+}
