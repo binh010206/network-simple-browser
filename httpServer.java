@@ -20,10 +20,15 @@ public class httpServer implements Runnable {
 
     public static void main(String[] args) {
         try (ServerSocket serverConnect = new ServerSocket(PORT, 50, InetAddress.getByName("0.0.0.0"))) {
-            System.out.println("=== HTTP SERVER ĐA DỊCH VỤ (RFC 2616) ĐÃ KHỞI ĐỘNG ===");
-            System.out.println("Đang lắng nghe tại cổng: " + PORT);
-            System.out.println("Hỗ trợ các định dạng: .html, .css, .pdf, .mp3, .mp4, .png, .jpg, .json");
-            System.out.println("Truy cập thử nghiệm: http://localhost:" + PORT + "/index.html\n");
+            String lanIp = getLanIp();
+            System.out.println("=============================================================");
+            System.out.println("   HTTP SERVER ĐA DỊCH VỤ (RFC 2616) ĐÃ SẴN SÀNG KẾT NỐI");
+            System.out.println("=============================================================");
+            System.out.println("-> Cổng lắng nghe: " + PORT + " (lắng nghe trên 0.0.0.0 - toàn bộ mạng)");
+            System.out.println("-> Địa chỉ máy này:        http://localhost:" + PORT + "/index.html");
+            System.out.println("-> Địa chỉ cho MÁY KHÁC:   http://" + lanIp + ":" + PORT + "/index.html");
+            System.out.println("-> Hỗ trợ định dạng: .html, .css, .pdf, .mp3, .mp4, .png, .jpg, .json");
+            System.out.println("=============================================================\n");
 
             while (true) {
                 Socket clientSocket = serverConnect.accept();
@@ -32,6 +37,24 @@ public class httpServer implements Runnable {
         } catch (IOException e) {
             System.err.println("Lỗi máy chủ HTTP: " + e.getMessage());
         }
+    }
+
+    private static String getLanIp() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = interfaces.nextElement();
+                if (iface.isLoopback() || !iface.isUp()) continue;
+                java.util.Enumeration<java.net.InetAddress> addrs = iface.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress addr = addrs.nextElement();
+                    if (addr instanceof java.net.Inet4Address && !addr.isLoopbackAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return "127.0.0.1";
     }
 
     @Override

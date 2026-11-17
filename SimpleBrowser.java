@@ -665,10 +665,69 @@ public class SimpleBrowser extends JFrame {
     private void autoScanLanServer(boolean silent) {
         new Thread(() -> {
             String myIp = getLocalIPv4();
-            if (myIp != null && !myIp.equals("127.0.0.1")) {
-                SwingUtilities.invokeLater(() -> txtUrl.setText("http://localhost:" + SERVER_PORT + "/index.html"));
+            if (!silent) {
+                SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
+                        "Đang quét tìm HTTP Server cổng " + SERVER_PORT + " trong mạng LAN (" + myIp.substring(0, Math.max(0, myIp.lastIndexOf('.') + 1)) + "*)...",
+                        "Quét LAN", JOptionPane.INFORMATION_MESSAGE));
             }
+            List<String> found = Collections.synchronizedList(new ArrayList<>());
+            // Check localhost first
+            if (checkHttpPort("127.0.0.1", SERVER_PORT)) {
+                found.add("localhost");
+            }
+            if (!myIp.equals("127.0.0.1") && checkHttpPort(myIp, SERVER_PORT)) {
+                if (!found.contains("localhost")) found.add(myIp);
+            }
+
+            // If on a LAN, scan the /24 subnet
+            if (myIp.contains(".") && !myIp.startsWith("127.")) {
+                String prefix = myIp.substring(0, myIp.lastIndexOf('.') + 1);
+                ExecutorService pool = Executors.newFixedThreadPool(40);
+                for (int i = 1; i <= 254; i++) {
+                    final String targetIp = prefix + i;
+                    if (targetIp.equals(myIp)) continue;
+                    pool.execute(() -> {
+                        if (checkHttpPort(targetIp, SERVER_PORT)) {
+                            found.add(targetIp);
+                        }
+                    });
+                }
+                pool.shutdown();
+                try {
+                    pool.awaitTermination(2500, java.util.concurrent.TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ignored) {}
+            }
+
+            SwingUtilities.invokeLater(() -> {
+                if (!found.isEmpty()) {
+                    // Ưu tiên chọn máy đối tác trong LAN (khác localhost và khác myIp) nếu có
+                    String chosen = found.stream()
+                            .filter(ip -> !ip.equals("localhost") && !ip.equals("127.0.0.1") && !ip.equals(myIp))
+                            .findFirst()
+                            .orElse(found.get(0));
+                    txtUrl.setText("http://" + chosen + ":" + SERVER_PORT + "/index.html");
+                    if (!silent) {
+                        JOptionPane.showMessageDialog(this,
+                                "Đã tìm thấy Web Server đang hoạt động:\n" + String.join("\n", found) +
+                                "\n\nĐã tự động điền: http://" + chosen + ":" + SERVER_PORT + "/index.html vào thanh URL!",
+                                "Tìm thấy Server LAN", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                } else if (!silent) {
+                    JOptionPane.showMessageDialog(this,
+                            "Không tìm thấy HTTP Server nào trên cổng " + SERVER_PORT + " trong mạng LAN.\nHãy chắc chắn máy kia đã bật httpServer và mở tường lửa!",
+                            "Kết quả quét LAN", JOptionPane.WARNING_MESSAGE);
+                }
+            });
         }).start();
+    }
+
+    private static boolean checkHttpPort(String ip, int port) {
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(ip, port), 250);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static String getLocalIPv4() {
