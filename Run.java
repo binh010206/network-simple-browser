@@ -19,6 +19,20 @@ public class Run {
         if (main.equals("build")) return;
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         String classPath = String.join(java.io.File.pathSeparator, ".build", "postgresql-connector.jar", "pdfbox-app.jar");
+
+        if (main.equals("SimpleBrowser")) {
+            boolean serverRunning = false;
+            try (var socket = new java.net.Socket("127.0.0.1", 8080)) {
+                serverRunning = true;
+            } catch (Exception ignored) {}
+
+            if (!serverRunning) {
+                System.out.println("[Run Code] Chưa thấy httpServer chạy, đang tự động bật httpServer chạy ngầm...");
+                new ProcessBuilder(javaExecutable, "-cp", classPath, "httpServer").start();
+                Thread.sleep(600);
+            }
+        }
+
         Process process = new ProcessBuilder(javaExecutable, "-cp", classPath, main)
                 .inheritIO().start();
         Runtime.getRuntime().addShutdownHook(new Thread(process::destroy));
