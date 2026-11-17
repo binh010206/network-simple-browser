@@ -1,0 +1,26 @@
+import java.nio.file.*;
+import java.util.*;
+import javax.tools.ToolProvider;
+
+/** Run Code entry point: java Run.java httpServer or SimpleBrowser. */
+public class Run {
+    public static void main(String[] args) throws Exception {
+        String main = args.length == 0 ? "SimpleBrowser" : args[0];
+        if (!Set.of("httpServer", "SimpleBrowser", "build").contains(main)) {
+            System.err.println("Mở httpServer.java (Server) hoặc SimpleBrowser.java (Client), rồi bấm Run Code.");
+            return;
+        }
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null) throw new IllegalStateException("Cần cài JDK 21 để chạy.");
+        Files.createDirectories(Path.of(".build"));
+        int result = compiler.run(null, System.out, System.err, "-encoding", "UTF-8", "-d", ".build",
+                "httpServer.java", "ServerDatabase.java", "SimpleBrowser.java");
+        if (result != 0) System.exit(result);
+        if (main.equals("build")) return;
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Process process = new ProcessBuilder(javaExecutable, "-cp", ".build" + java.io.File.pathSeparator + "postgresql-connector.jar", main)
+                .inheritIO().start();
+        Runtime.getRuntime().addShutdownHook(new Thread(process::destroy));
+        System.exit(process.waitFor());
+    }
+}

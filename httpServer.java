@@ -2,6 +2,8 @@ import java.io.*;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URI;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Date;
@@ -13,20 +15,29 @@ public class httpServer implements Runnable {
     static final String DEFAULT_FILE = "index.html";
     static final int PORT = 8080;
     private final Socket connect;
+    private String requestMethod = "GET";
+    private String requestTarget = "/";
+    private String requestData = "";
 
     public httpServer(Socket c) {
         this.connect = c;
     }
 
     public static void main(String[] args) {
+        try {
+            ServerDatabase.initialize();
+        } catch (Exception e) {
+            System.err.println("[PostgreSQL] Không khởi động Server vì chưa kết nối được database: " + e.getMessage());
+            System.exit(1);
+        }
         try (ServerSocket serverConnect = new ServerSocket(PORT, 50, InetAddress.getByName("0.0.0.0"))) {
-            String lanIp = getLanIp();
+            printLanAddresses();
             System.out.println("=============================================================");
             System.out.println("   HTTP SERVER ĐA DỊCH VỤ (RFC 2616) ĐÃ SẴN SÀNG KẾT NỐI");
             System.out.println("=============================================================");
             System.out.println("-> Cổng lắng nghe: " + PORT + " (lắng nghe trên 0.0.0.0 - toàn bộ mạng)");
             System.out.println("-> Địa chỉ máy này:        http://localhost:" + PORT + "/index.html");
-            System.out.println("-> Địa chỉ cho MÁY KHÁC:   http://" + lanIp + ":" + PORT + "/index.html");
+            System.out.println("-> Máy Phát: dùng địa chỉ Wi-Fi/LAN được in ở trên.");
             System.out.println("-> Hỗ trợ định dạng: .html, .css, .pdf, .mp3, .mp4, .png, .jpg, .json");
             System.out.println("=============================================================\n");
 
@@ -36,10 +47,11 @@ public class httpServer implements Runnable {
             }
         } catch (IOException e) {
             System.err.println("Lỗi máy chủ HTTP: " + e.getMessage());
+            System.exit(1);
         }
     }
 
-    private static String getLanIp() {
+    private static void printLanAddresses() {
         try {
             java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
             while (interfaces.hasMoreElements()) {
@@ -49,12 +61,11 @@ public class httpServer implements Runnable {
                 while (addrs.hasMoreElements()) {
                     java.net.InetAddress addr = addrs.nextElement();
                     if (addr instanceof java.net.Inet4Address && !addr.isLoopbackAddress()) {
-                        return addr.getHostAddress();
+                        System.out.println("[Địa chỉ " + iface.getDisplayName() + "] http://" + addr.getHostAddress() + ":" + PORT + "/index.html");
                     }
                 }
             }
         } catch (Exception ignored) {}
-        return "127.0.0.1";
     }
 
     @Override
@@ -63,36 +74,40 @@ public class httpServer implements Runnable {
              OutputStream rawOut = connect.getOutputStream()) {
 
             connect.setSoTimeout(5000);
-            BufferedReader in = new BufferedReader(new InputStreamReader(rawIn, StandardCharsets.UTF_8));
+            BufferedInputStream in = new BufferedInputStream(rawIn);
 
-            String requestLine = in.readLine();
+            String requestLine = readLine(in);
             if (requestLine == null || requestLine.isEmpty()) return;
             System.out.println("[Request]: " + requestLine);
 
             StringTokenizer tokenizer = new StringTokenizer(requestLine);
             String method = tokenizer.nextToken().toUpperCase();
             String fileRequested = tokenizer.hasMoreTokens() ? tokenizer.nextToken() : "/";
+            requestMethod = method;
+            requestTarget = fileRequested;
 
             // Đọc toàn bộ HTTP Request Headers
             int contentLength = 0;
             String headerLine;
-            while ((headerLine = in.readLine()) != null && !headerLine.isEmpty()) {
+            int headerBytes = 0;
+            while ((headerLine = readLine(in)) != null && !headerLine.isEmpty()) {
+                headerBytes += headerLine.length();
+                if (headerBytes > 65536) throw new IOException("Headers quá lớn");
                 if (headerLine.toLowerCase().startsWith("content-length:")) {
                     contentLength = Integer.parseInt(headerLine.substring(15).trim());
                 }
+                if (headerLine.toLowerCase().startsWith("transfer-encoding:"))
+                    throw new IOException("Chỉ hỗ trợ request có Content-Length");
             }
+            if (contentLength < 0 || contentLength > 1048576) throw new IOException("Body vượt giới hạn 1 MB");
 
             // Nếu là POST, đọc nội dung body
             StringBuilder postData = new StringBuilder();
             if ("POST".equals(method) && contentLength > 0) {
-                char[] buf = new char[contentLength];
-                int totalRead = 0;
-                while (totalRead < contentLength) {
-                    int r = in.read(buf, totalRead, contentLength - totalRead);
-                    if (r == -1) break;
-                    totalRead += r;
-                }
-                postData.append(buf, 0, totalRead);
+                byte[] buf = in.readNBytes(contentLength);
+                if (buf.length != contentLength) throw new EOFException("Body chưa đủ Content-Length");
+                postData.append(new String(buf, StandardCharsets.UTF_8));
+                requestData = postData.toString();
                 System.out.println("[POST Body]: " + postData);
             }
 
@@ -102,6 +117,7 @@ public class httpServer implements Runnable {
                 return;
             }
 
+            fileRequested = URI.create(fileRequested).getPath();
             if (fileRequested.endsWith("/")) {
                 fileRequested += DEFAULT_FILE;
             }
@@ -109,7 +125,15 @@ public class httpServer implements Runnable {
                 fileRequested = fileRequested.substring(1);
             }
 
-            File file = new File(WEB_ROOT, fileRequested);
+            Path root = WEB_ROOT.toPath().toRealPath();
+            Path requested = root.resolve(fileRequested).normalize();
+            // Only publish web resources; never serve Java source, database config or Git files.
+            if (!requested.startsWith(root) || (!method.equals("POST") && !fileRequested.toLowerCase().matches(".*\\.(html?|css|js|pdf|mp3|mp4|png|jpe?g|json|ico)"))
+                    || (Files.exists(requested) && !requested.toRealPath().startsWith(root))) {
+                sendHttpResponse(rawOut, "403 Forbidden", "text/plain; charset=UTF-8", "Forbidden".getBytes(StandardCharsets.UTF_8), !method.equals("HEAD"));
+                return;
+            }
+            File file = requested.toFile();
             byte[] bodyBytes;
             String contentType = getContentType(fileRequested);
 
@@ -120,7 +144,7 @@ public class httpServer implements Runnable {
                         + "<div class='header'><h1>Kết quả Xử lý Yêu cầu POST từ Client</h1></div>"
                         + "<div class='card'>"
                         + "<h2>Dữ liệu đã nhận thành công từ Body:</h2>"
-                        + "<p><span>" + postData + "</span></p>"
+                        + "<p><span>" + escapeHtml(postData.toString()) + "</span></p>"
                         + "<p><a href='index.html'>⬅ Quay lại trang chủ</a></p>"
                         + "</div></body></html>";
                 bodyBytes = postResponseHtml.getBytes(StandardCharsets.UTF_8);
@@ -128,7 +152,7 @@ public class httpServer implements Runnable {
             } else {
                 // File 404
                 String notFoundHtml = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>404 Not Found</title></head><body>"
-                        + "<h1>404 File Not Found</h1><p>Tài nguyên " + fileRequested + " không tồn tại trên máy chủ.</p></body></html>";
+                        + "<h1>404 File Not Found</h1><p>Tài nguyên " + escapeHtml(fileRequested) + " không tồn tại trên máy chủ.</p></body></html>";
                 bodyBytes = notFoundHtml.getBytes(StandardCharsets.UTF_8);
                 sendHttpResponse(rawOut, "404 Not Found", "text/html; charset=UTF-8", bodyBytes, !method.equals("HEAD"));
                 return;
@@ -148,12 +172,25 @@ public class httpServer implements Runnable {
     }
 
     private void sendHttpResponse(OutputStream out, String status, String contentType, byte[] body, boolean includeBody) throws IOException {
+        String databaseHeader;
+        try {
+            long id = ServerDatabase.record(connect.getInetAddress().getHostAddress(), requestMethod, requestTarget,
+                    requestData, Integer.parseInt(status.substring(0, 3)), body.length);
+            System.out.println("[PostgreSQL] ĐÃ LƯU #" + id + " | " + connect.getInetAddress().getHostAddress() + " | " + requestMethod + " " + requestTarget);
+            databaseHeader = "X-Database-Saved: true\r\nX-Database-Record-Id: " + id + "\r\n";
+        } catch (java.sql.SQLException e) {
+            System.err.println("[PostgreSQL] LƯU THẤT BẠI, SQLState=" + e.getSQLState());
+            status = "503 Service Unavailable";
+            contentType = "text/plain; charset=UTF-8";
+            body = "Server chưa lưu được PostgreSQL. Kiểm tra database trên máy Server.".getBytes(StandardCharsets.UTF_8);
+            databaseHeader = "X-Database-Saved: false\r\n";
+        }
         String headers = "HTTP/1.1 " + status + "\r\n"
+                + databaseHeader
                 + "Server: VKU-Java-MultiService-HTTP-Server/3.0\r\n"
                 + "Date: " + new Date() + "\r\n"
                 + "Content-Type: " + contentType + "\r\n"
                 + "Content-Length: " + body.length + "\r\n"
-                + "Accept-Ranges: bytes\r\n"
                 + "Connection: close\r\n"
                 + "\r\n";
 
@@ -162,6 +199,22 @@ public class httpServer implements Runnable {
             out.write(body);
         }
         out.flush();
+    }
+
+    private static String readLine(InputStream in) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        int b;
+        while ((b = in.read()) != -1) {
+            if (b == '\n') break;
+            if (b != '\r') bytes.write(b);
+            if (bytes.size() > 8192) throw new IOException("Dòng HTTP quá dài");
+        }
+        if (b == -1 && bytes.size() == 0) return null;
+        return bytes.toString(StandardCharsets.ISO_8859_1);
+    }
+
+    private static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
 
     private String getContentType(String fileRequested) {

@@ -16,7 +16,6 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.sql.*;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -86,7 +85,7 @@ public class SimpleBrowser extends JFrame {
     }
 
     public SimpleBrowser() {
-        setTitle("VKU Simple Web Browser (Hỗ trợ GET / HEAD / POST / Download & Database Lịch sử)");
+        setTitle("VKU Simple Web Browser (Hỗ trợ GET / HEAD / POST / Download & Lịch sử cục bộ)");
         setSize(1120, 780);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
@@ -119,7 +118,7 @@ public class SimpleBrowser extends JFrame {
 
         btnScan = new JButton("Quét LAN");
         btnHistory = new JButton("Lịch sử");
-        btnDbManager = new JButton("🗄️ CSDL");
+        btnDbManager = new JButton("Lịch sử trên máy này");
         btnOpenExternal = new JButton("Mở Chrome");
         btnOpenExternal.setEnabled(false);
 
@@ -265,6 +264,10 @@ public class SimpleBrowser extends JFrame {
                 HttpResponse<byte[]> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofByteArray());
                 int statusCode = response.statusCode();
                 HttpHeaders headers = response.headers();
+                String saved = headers.firstValue("X-Database-Saved").orElse("");
+                String databaseInfo = "true".equals(saved)
+                        ? "PostgreSQL trên Server: ĐÃ LƯU bản ghi #" + headers.firstValue("X-Database-Record-Id").orElse("?") + "\n"
+                        : "false".equals(saved) ? "PostgreSQL trên Server: CHƯA LƯU — kiểm tra Server.\n" : "";
                 String contentType = headers.firstValue("content-type").orElse("text/plain");
                 lastContentType = contentType;
                 lastUrl = response.uri().toString();
@@ -282,7 +285,7 @@ public class SimpleBrowser extends JFrame {
 
                     SwingUtilities.invokeLater(() -> {
                         if (addToHistory) recordVisit(method, targetUrl, postData, statusCode, 0);
-                        txtStatsAndHeaders.setText(headInfo.toString());
+                        txtStatsAndHeaders.setText(databaseInfo + headInfo);
                         txtRawHtml.setText("(Phương thức HEAD không trả về thân dữ liệu)");
                         renderHtmlSafely("<html><body><div class='card'><h2>Kết quả phương thức HEAD (HTTP " + statusCode + ")</h2>"
                                 + "<p>Phương thức <span>HEAD</span> chỉ lấy các Headers của máy chủ mà không tải nội dung file.</p></div></body></html>");
@@ -321,7 +324,7 @@ public class SimpleBrowser extends JFrame {
 
                         SwingUtilities.invokeLater(() -> {
                             if (addToHistory) recordVisit(method, targetUrl, postData, statusCode, byteLength);
-                            txtStatsAndHeaders.setText(stats.toString());
+                            txtStatsAndHeaders.setText(databaseInfo + stats);
                             txtRawHtml.setText("[Dữ liệu nhị phân - Kích thước: " + byteLength + " bytes]");
                             renderHtmlSafely(previewHtml);
                             btnSend.setEnabled(true);
@@ -352,7 +355,7 @@ public class SimpleBrowser extends JFrame {
 
                         SwingUtilities.invokeLater(() -> {
                             if (addToHistory) recordVisit(method, targetUrl, postData, statusCode, byteLength);
-                            txtStatsAndHeaders.setText(stats.toString());
+                            txtStatsAndHeaders.setText(databaseInfo + stats);
                             txtRawHtml.setText(htmlContent);
                             txtRawHtml.setCaretPosition(0);
                             renderHtmlSafely(printableHtml);
@@ -456,14 +459,6 @@ public class SimpleBrowser extends JFrame {
         updateNavButtons();
     }
 
-    private static final String PG_URL = "jdbc:postgresql://127.0.0.1:5432/lab8_server1";
-    private static final String PG_USER = "lab8_server1";
-    private static final String PG_PASS = "Lab8_e03980b458a7046436b168e426cee1aa5f2db97cf615811f";
-
-    private static final String MYSQL_URL = "jdbc:mysql://localhost:3306/vku_network_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
-    private static final String MYSQL_USER = "root";
-    private static final String MYSQL_PASS = "";
-
     private void saveHistoryEntryToDb(HistoryEntry e) {
         boolean exists = new File(HISTORY_DB_FILE).exists();
         try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(new FileOutputStream(HISTORY_DB_FILE, true), StandardCharsets.UTF_8))) {
@@ -474,93 +469,9 @@ public class SimpleBrowser extends JFrame {
                     escapeCsv(e.time), escapeCsv(e.method), escapeCsv(e.url), escapeCsv(e.postData), e.statusCode, e.contentLength);
         } catch (IOException ignored) {}
 
-        // Ghi đồng thời vào PostgreSQL và MySQL (chạy bất đồng bộ trong background thread)
-        new Thread(() -> {
-            // 1. Ghi vào PostgreSQL (lab8_server1.browser_history)
-            try {
-                Class.forName("org.postgresql.Driver");
-                try (Connection conn = DriverManager.getConnection(PG_URL, PG_USER, PG_PASS);
-                     PreparedStatement ps = conn.prepareStatement(
-                             "INSERT INTO browser_history (time, method, url, post_data, status_code, content_length) VALUES (?, ?, ?, ?, ?, ?)")) {
-                    ps.setString(1, e.time);
-                    ps.setString(2, e.method);
-                    ps.setString(3, e.url);
-                    ps.setString(4, e.postData);
-                    ps.setInt(5, e.statusCode);
-                    ps.setLong(6, e.contentLength);
-                    ps.executeUpdate();
-                }
-            } catch (Throwable ignored) {}
-
-            // 2. Ghi vào MySQL XAMPP (vku_network_db.browser_history)
-            try {
-                Class.forName("com.mysql.cj.jdbc.Driver");
-                try (Connection conn = DriverManager.getConnection(MYSQL_URL, MYSQL_USER, MYSQL_PASS);
-                     PreparedStatement ps = conn.prepareStatement(
-                             "INSERT INTO browser_history (time, method, url, post_data, status_code, content_length) VALUES (?, ?, ?, ?, ?, ?)")) {
-                    ps.setString(1, e.time);
-                    ps.setString(2, e.method);
-                    ps.setString(3, e.url);
-                    ps.setString(4, e.postData);
-                    ps.setInt(5, e.statusCode);
-                    ps.setLong(6, e.contentLength);
-                    ps.executeUpdate();
-                }
-            } catch (Throwable ignored) {}
-        }).start();
     }
 
     private void loadHistoryDatabase() {
-        // Ưu tiên 1: Nạp từ PostgreSQL
-        boolean loaded = false;
-        try {
-            Class.forName("org.postgresql.Driver");
-            try (Connection conn = DriverManager.getConnection(PG_URL, PG_USER, PG_PASS);
-                 Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery("SELECT time, method, url, post_data, status_code, content_length FROM browser_history ORDER BY id ASC")) {
-
-                while (rs.next()) {
-                    HistoryEntry e = new HistoryEntry(
-                            rs.getString("time"),
-                            rs.getString("method"),
-                            rs.getString("url"),
-                            rs.getString("post_data"),
-                            rs.getInt("status_code"),
-                            rs.getLong("content_length")
-                    );
-                    visitLog.add(e);
-                    loaded = true;
-                }
-            }
-        } catch (Throwable ignored) {}
-
-        if (loaded && !visitLog.isEmpty()) return;
-
-        // Ưu tiên 2: Nạp từ XAMPP MySQL
-        try {
-            Class.forName("com.mysql.cj.jdbc.Driver");
-            try (Connection conn = DriverManager.getConnection(MYSQL_URL, MYSQL_USER, MYSQL_PASS);
-                 Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery("SELECT time, method, url, post_data, status_code, content_length FROM browser_history ORDER BY id ASC")) {
-
-                while (rs.next()) {
-                    HistoryEntry e = new HistoryEntry(
-                            rs.getString("time"),
-                            rs.getString("method"),
-                            rs.getString("url"),
-                            rs.getString("post_data"),
-                            rs.getInt("status_code"),
-                            rs.getLong("content_length")
-                    );
-                    visitLog.add(e);
-                    loaded = true;
-                }
-            }
-        } catch (Throwable ignored) {}
-
-        if (loaded && !visitLog.isEmpty()) return;
-
-        // Ưu tiên 3: Fallback nạp từ file CSV
         File f = new File(HISTORY_DB_FILE);
         if (!f.exists()) return;
         try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8))) {
@@ -583,7 +494,7 @@ public class SimpleBrowser extends JFrame {
     }
 
     private void showDatabaseDialog() {
-        JDialog dlg = new JDialog(this, "🗄️ Quản lý Cơ sở Dữ liệu Lịch sử Duyệt Web (" + visitLog.size() + " bản ghi)", true);
+        JDialog dlg = new JDialog(this, "Lịch sử Browser trên máy này (" + visitLog.size() + " bản ghi)", true);
         dlg.setSize(850, 480);
         dlg.setLocationRelativeTo(this);
         dlg.setLayout(new BorderLayout(6, 6));
@@ -610,20 +521,14 @@ public class SimpleBrowser extends JFrame {
             }
         });
 
-        JButton btnClearDb = new JButton("Xóa toàn bộ CSDL");
+        JButton btnClearDb = new JButton("Xóa lịch sử trên máy này");
         btnClearDb.addActionListener(ev -> {
-            int confirm = JOptionPane.showConfirmDialog(dlg, "Bạn có chắc chắn muốn xóa toàn bộ CSDL lịch sử?", "Xác nhận", JOptionPane.YES_NO_OPTION);
+            int confirm = JOptionPane.showConfirmDialog(dlg, "Bạn có chắc chắn muốn xóa lịch sử trên máy này? Nhật ký PostgreSQL trên Server vẫn được giữ.", "Xác nhận", JOptionPane.YES_NO_OPTION);
             if (confirm == JOptionPane.YES_OPTION) {
                 visitLog.clear();
                 navStack.clear();
                 navIndex = -1;
                 new File(HISTORY_DB_FILE).delete();
-                new Thread(() -> {
-                    try (Connection conn = DriverManager.getConnection(MYSQL_URL, MYSQL_USER, MYSQL_PASS);
-                         Statement stmt = conn.createStatement()) {
-                        stmt.executeUpdate("DELETE FROM browser_history");
-                    } catch (Throwable ignored) {}
-                }).start();
                 model.setRowCount(0);
                 updateNavButtons();
             }

@@ -1,0 +1,13 @@
+{
+  "code-runner.executorMap": {
+    "java": "java Run.java $fileNameWithoutExt"
+  },
+  "code-runner.cwd": "$workspaceRoot",
+  "code-runner.fileDirectoryAsCwd": false,
+  "code-runner.runInTerminal": true,
+  "code-runner.saveAllFilesBeforeRun": true,
+  "code-runner.ignoreSelection": true,
+  "java.project.referencedLibraries": [
+    "postgresql-connector.jar"
+  ]
+}
