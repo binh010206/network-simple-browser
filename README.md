@@ -44,3 +44,14 @@ ORDER BY id DESC;
 ```
 
 Bấm F5 chạy lại truy vấn sau mỗi lần gửi request. Không cần cài PostgreSQL trên máy Client.
+
+## Thanh địa chỉ: web và file trên máy
+
+- `vku.udn.vn` tự chuyển thành `https://vku.udn.vn`.
+- `localhost:8080` hoặc `10.x.x.x:8080` dùng HTTP để demo LAN.
+- Dán đường dẫn tuyệt đối, kể cả có dấu/khoảng trắng/ngoặc kép, hoặc URI `file:///` để đọc file trên chính máy chạy Browser.
+- Xem trực tiếp HTML, văn bản UTF-8 (TXT/CSV/JSON/XML/MD/mã nguồn), ảnh PNG/JPEG/GIF/BMP và PDF có nút chuyển trang.
+- Mở đường dẫn thư mục để chọn file bên trong. File không tồn tại có thông báo lỗi.
+- Định dạng khác và file trên 64 MB có nút mở bằng ứng dụng mặc định; không giả vờ đã xem được nội dung.
+- File cục bộ không gửi lên Server/PostgreSQL. Lịch sử trên Client vẫn lưu để dùng nút Lùi/Tiến.
+- PDF dùng [Apache PDFBox 3.0.8](https://pdfbox.apache.org/), đóng gói trong `pdfbox-app.jar` (Apache License 2.0, giấy phép nằm trong JAR).

@@ -8,6 +8,7 @@
   "code-runner.saveAllFilesBeforeRun": true,
   "code-runner.ignoreSelection": true,
   "java.project.referencedLibraries": [
-    "postgresql-connector.jar"
+    "postgresql-connector.jar",
+    "pdfbox-app.jar"
   ]
 }

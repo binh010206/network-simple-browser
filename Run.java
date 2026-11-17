@@ -13,12 +13,13 @@ public class Run {
         var compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) throw new IllegalStateException("Cần cài JDK 21 để chạy.");
         Files.createDirectories(Path.of(".build"));
-        int result = compiler.run(null, System.out, System.err, "-encoding", "UTF-8", "-d", ".build",
-                "httpServer.java", "ServerDatabase.java", "SimpleBrowser.java");
+        int result = compiler.run(null, System.out, System.err, "-encoding", "UTF-8", "-cp", "pdfbox-app.jar", "-d", ".build",
+                "httpServer.java", "ServerDatabase.java", "SimpleBrowser.java", "BrowserAddress.java", "PdfPreview.java");
         if (result != 0) System.exit(result);
         if (main.equals("build")) return;
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        Process process = new ProcessBuilder(javaExecutable, "-cp", ".build" + java.io.File.pathSeparator + "postgresql-connector.jar", main)
+        String classPath = String.join(java.io.File.pathSeparator, ".build", "postgresql-connector.jar", "pdfbox-app.jar");
+        Process process = new ProcessBuilder(javaExecutable, "-cp", classPath, main)
                 .inheritIO().start();
         Runtime.getRuntime().addShutdownHook(new Thread(process::destroy));
         System.exit(process.waitFor());

@@ -13,6 +13,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import javax.imageio.ImageIO;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -40,6 +42,11 @@ public class SimpleBrowser extends JFrame {
     private JTextArea txtStatsAndHeaders;
     private JTextArea txtRawHtml;
     private JEditorPane htmlRenderPane;
+    private final CardLayout previewLayout = new CardLayout();
+    private final JPanel previewCards = new JPanel(previewLayout);
+    private final PdfPreview pdfPreview = new PdfPreview();
+    private final JLabel imagePreview = new JLabel("", SwingConstants.CENTER);
+    private JTabbedPane tabbedPane;
 
     private String lastRawHtml = "";
     private String lastUrl = "";
@@ -119,7 +126,7 @@ public class SimpleBrowser extends JFrame {
         btnScan = new JButton("Quét LAN");
         btnHistory = new JButton("Lịch sử");
         btnDbManager = new JButton("Lịch sử trên máy này");
-        btnOpenExternal = new JButton("Mở Chrome");
+        btnOpenExternal = new JButton("Mở ứng dụng mặc định");
         btnOpenExternal.setEnabled(false);
 
         btnPanel.add(btnSend);
@@ -158,7 +165,7 @@ public class SimpleBrowser extends JFrame {
         scrollStats.setBorder(BorderFactory.createTitledBorder("Kết quả phân tích HTTP & Thống kê thẻ HTML"));
 
         // 3. Tabbed Pane
-        JTabbedPane tabbedPane = new JTabbedPane();
+        tabbedPane = new JTabbedPane();
         htmlRenderPane = new JEditorPane();
         htmlRenderPane.setEditable(false);
         htmlRenderPane.setContentType("text/html");
@@ -178,7 +185,10 @@ public class SimpleBrowser extends JFrame {
             }
         });
 
-        tabbedPane.addTab("🌐 Giao diện hiển thị HTML & CSS (Web View)", new JScrollPane(htmlRenderPane));
+        previewCards.add(new JScrollPane(htmlRenderPane), "html");
+        previewCards.add(pdfPreview, "pdf");
+        previewCards.add(new JScrollPane(imagePreview), "image");
+        tabbedPane.addTab("Nội dung trang web / file", previewCards);
 
         txtRawHtml = new JTextArea();
         txtRawHtml.setEditable(false);
@@ -206,7 +216,6 @@ public class SimpleBrowser extends JFrame {
         btnScan.addActionListener(e -> autoScanLanServer(false));
 
         updateNavButtons();
-        autoScanLanServer(true);
     }
 
     private void setupHtmlRenderKit() {
@@ -228,10 +237,18 @@ public class SimpleBrowser extends JFrame {
     }
 
     private void executeRequest(boolean addToHistory) {
-        String rawUrl = txtUrl.getText().trim();
-        if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
-            rawUrl = "http://" + rawUrl;
-            txtUrl.setText(rawUrl);
+        URI address;
+        try {
+            address = BrowserAddress.resolve(txtUrl.getText());
+        } catch (IllegalArgumentException e) {
+            txtStatsAndHeaders.setText("Địa chỉ chưa hợp lệ: " + e.getMessage());
+            return;
+        }
+        String rawUrl = address.toASCIIString();
+        txtUrl.setText(rawUrl);
+        if ("file".equalsIgnoreCase(address.getScheme())) {
+            openLocalFile(address, addToHistory);
+            return;
         }
 
         String method = (String) cbMethod.getSelectedItem();
@@ -326,7 +343,11 @@ public class SimpleBrowser extends JFrame {
                             if (addToHistory) recordVisit(method, targetUrl, postData, statusCode, byteLength);
                             txtStatsAndHeaders.setText(databaseInfo + stats);
                             txtRawHtml.setText("[Dữ liệu nhị phân - Kích thước: " + byteLength + " bytes]");
-                            renderHtmlSafely(previewHtml);
+                            if (contentType.contains("pdf")) {
+                                showPdf(bodyBytes);
+                            } else {
+                                renderHtmlSafely(previewHtml);
+                            }
                             btnSend.setEnabled(true);
                             btnDownload.setEnabled(true);
                             btnOpenExternal.setEnabled(true);
@@ -376,6 +397,100 @@ public class SimpleBrowser extends JFrame {
         }).start();
     }
 
+    private void showPdf(byte[] bytes) {
+        previewLayout.show(previewCards, "pdf");
+        tabbedPane.setSelectedIndex(0);
+        pdfPreview.showPdf(bytes);
+    }
+
+    private static String escapeHtml(String value) {
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
+
+    private void openLocalFile(URI uri, boolean addToHistory) {
+        btnSend.setEnabled(false);
+        btnDownload.setEnabled(false);
+        btnOpenExternal.setEnabled(false);
+        cbMethod.setSelectedItem("GET");
+        lastResponseBody = null;
+        txtStatsAndHeaders.setText("Đang đọc file trên máy này: " + uri);
+        new Thread(() -> {
+            try {
+                Path path = Path.of(uri);
+                if (!Files.exists(path)) throw new FileNotFoundException(path.toString());
+                if (Files.isDirectory(path)) {
+                    StringBuilder listing = new StringBuilder("<html><body><h2>" + escapeHtml(path.toString()) + "</h2>");
+                    if (path.getParent() != null) listing.append("<p><a href=\"").append(path.getParent().toUri()).append("\">Thư mục cha</a></p>");
+                    try (var children = Files.list(path)) {
+                        children.sorted().limit(1000).forEach(child -> listing.append("<p><a href=\"")
+                                .append(child.toUri().toASCIIString()).append("\">")
+                                .append(escapeHtml(child.getFileName().toString())).append("</a></p>"));
+                    }
+                    listing.append("</body></html>");
+                    SwingUtilities.invokeLater(() -> {
+                        lastUrl = uri.toASCIIString();
+                        lastContentType = "text/html";
+                        renderHtmlSafely(listing.toString());
+                        tabbedPane.setSelectedIndex(0);
+                        txtRawHtml.setText("");
+                        txtStatsAndHeaders.setText("Thư mục trên máy này: " + path + "\nBấm tên file để mở (tối đa 1000 mục).");
+                        btnSend.setEnabled(true);
+                        btnOpenExternal.setEnabled(true);
+                        if (addToHistory) recordVisit("GET", lastUrl, "", 200, 0);
+                    });
+                    return;
+                }
+                long size = Files.size(path);
+                String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                boolean pdf = name.endsWith(".pdf");
+                boolean image = name.matches(".*\\.(png|jpe?g|gif|bmp|wbmp)");
+                boolean html = name.matches(".*\\.(html?|xhtml)");
+                boolean text = html || name.matches(".*\\.(txt|csv|log|json|xml|md|java|css|js|sql|properties|ya?ml|ini)");
+                boolean previewable = (pdf || image || text) && size <= 64L * 1024 * 1024;
+                byte[] bytes = previewable ? Files.readAllBytes(path) : null;
+                java.awt.image.BufferedImage picture = previewable && image ? ImageIO.read(new ByteArrayInputStream(bytes)) : null;
+                String contents = previewable && text ? new String(bytes, StandardCharsets.UTF_8) : "";
+                String mime = Files.probeContentType(path);
+                String contentType = mime == null ? "application/octet-stream" : mime;
+                SwingUtilities.invokeLater(() -> {
+                    lastUrl = uri.toASCIIString();
+                    lastContentType = contentType;
+                    lastResponseBody = bytes;
+                    pdfPreview.clear();
+                    imagePreview.setIcon(null);
+                    txtRawHtml.setText(text ? contents : "File nhị phân: " + path.getFileName());
+                    if (previewable && pdf) {
+                        showPdf(bytes);
+                    } else if (picture != null) {
+                        imagePreview.setIcon(new ImageIcon(picture));
+                        previewLayout.show(previewCards, "image");
+                    } else if (previewable && text) {
+                        renderHtmlSafely(html ? prepareHtmlForSwingView(contents, lastUrl)
+                                : "<html><body><pre>" + escapeHtml(contents) + "</pre></body></html>");
+                    } else {
+                        renderHtmlSafely("<html><body><h2>" + escapeHtml(path.getFileName().toString()) + "</h2><p>"
+                                + size + " bytes</p><p>" + (size > 64L * 1024 * 1024 ? "File lớn hơn giới hạn xem trước 64 MB."
+                                : "Định dạng này chưa hỗ trợ xem trực tiếp trong Browser.")
+                                + "</p><p>Bấm <b>Mở ứng dụng mặc định</b> để xem file.</p></body></html>");
+                    }
+                    tabbedPane.setSelectedIndex(0);
+                    txtStatsAndHeaders.setText("FILE TRÊN MÁY NÀY\nĐường dẫn: " + path + "\nKích thước: " + size
+                            + " bytes\nKhông gửi file lên HTTP Server hoặc PostgreSQL.");
+                    btnSend.setEnabled(true);
+                    btnOpenExternal.setEnabled(true);
+                    btnDownload.setEnabled(bytes != null);
+                    if (addToHistory) recordVisit("GET", lastUrl, "", 200, size);
+                });
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> {
+                    renderHtmlSafely("<html><body><h2>Không mở được đường dẫn</h2><p>" + escapeHtml(e.getMessage() == null ? e.toString() : e.getMessage()) + "</p></body></html>");
+                    txtStatsAndHeaders.setText("Không mở được file trên máy này: " + e.getMessage());
+                    btnSend.setEnabled(true);
+                });
+            }
+        }, "local-file-reader").start();
+    }
+
     private void performDownloadFile() {
         if (lastResponseBody == null || lastResponseBody.length == 0) {
             JOptionPane.showMessageDialog(this, "Chưa có dữ liệu nào để tải về!", "Thông báo", JOptionPane.WARNING_MESSAGE);
@@ -413,9 +528,13 @@ public class SimpleBrowser extends JFrame {
     }
 
     private void renderHtmlSafely(String cleanHtml) {
+        pdfPreview.clear();
+        imagePreview.setIcon(null);
+        previewLayout.show(previewCards, "html");
         try {
             HTMLEditorKit kit = (HTMLEditorKit) htmlRenderPane.getEditorKit();
             HTMLDocument doc = (HTMLDocument) kit.createDefaultDocument();
+            if (!lastUrl.isEmpty()) doc.setBase(URI.create(lastUrl).toURL());
             doc.putProperty("IgnoreCharsetDirective", Boolean.TRUE);
             htmlRenderPane.setDocument(doc);
             htmlRenderPane.setText(cleanHtml);
@@ -561,7 +680,9 @@ public class SimpleBrowser extends JFrame {
 
     private void openInSystemBrowser() {
         try {
-            Desktop.getDesktop().browse(URI.create(lastUrl));
+            URI uri = URI.create(lastUrl);
+            if ("file".equalsIgnoreCase(uri.getScheme())) Desktop.getDesktop().open(Path.of(uri).toFile());
+            else Desktop.getDesktop().browse(uri);
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Không thể mở trình duyệt ngoài: " + ex.getMessage());
         }
